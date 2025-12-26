@@ -100,33 +100,31 @@ ORG MERCH is a complete e-commerce platform designed for **university organizati
 **File**: `app/Http/Controllers/Api/AuthController.php` (Lines 77-103)
 
 ```php
-public function login(Request $request)
+public function login(Request $request)  // Handles user login - receives HTTP request with credentials
 {
-    $data = $request->validate([
-        'email' => 'required_without:username|email',
-        'username' => 'required_without:email|string',
-        'password' => 'required|string',
-    ]);
+    $data = $request->validate([  // Validate incoming data - Laravel auto-rejects if invalid
+        'email' => 'required_without:username|email',  // Email required if username not provided, must be valid email format
+        'username' => 'required_without:email|string',  // Username required if email not provided, must be string
+        'password' => 'required|string',  // Password always required, must be string
+    ]);  // If validation fails, Laravel returns 422 error automatically
 
-    $user = null;
-    if (!empty($data['email'])) {
-        $user = User::where('email', $data['email'])->first();
-    } else {
-        $user = User::where('username', $data['username'])->first();
+    $user = null;  // Initialize user variable to null
+    if (!empty($data['email'])) {  // Check if user provided email
+        $user = User::where('email', $data['email'])->first();  // Query database: find user by email, get first match
+    } else {  // If no email provided, use username
+        $user = User::where('username', $data['username'])->first();  // Query database: find user by username
     }
 
-    if (!$user || !Hash::check($data['password'], $user->password)) {
-        return response()->json(['message' => 'invalid_credentials'], 401);
-    }
+    if (!$user || !Hash::check($data['password'], $user->password)) {  // If no user found OR password doesn't match
+        return response()->json(['message' => 'invalid_credentials'], 401);  // Return 401 Unauthorized error
+    }  // Hash::check() compares plain password with hashed password in database
 
-    // Revoke all existing tokens for this user (single session only)
-    $user->tokens()->delete();
+    $user->tokens()->delete();  // Delete ALL existing tokens for this user (forces logout on other devices)
 
-    // Create new Sanctum token
-    $token = $user->createToken('api_token')->plainTextToken;
+    $token = $user->createToken('api_token')->plainTextToken;  // Create new Sanctum token, get it as plain text string
 
-    return response()->json(['token' => $token, 'user' => $user]);
-}
+    return response()->json(['token' => $token, 'user' => $user]);  // Return token + user data as JSON response
+}  // Token is used in Authorization header for future API requests
 ```
 
 **🔍 How This Works:**
@@ -145,38 +143,36 @@ public function login(Request $request)
 **File**: `app/Http/Controllers/Api/AuthController.php` (Lines 193-223)
 
 ```php
-public function adminLogin(Request $request)
+public function adminLogin(Request $request)  // Separate login for organization admins
 {
-    $data = $request->validate([
-        'admin_username' => 'required|string',
-        'admin_password' => 'required|string',
+    $data = $request->validate([  // Validate admin credentials
+        'admin_username' => 'required|string',  // Admin username is required
+        'admin_password' => 'required|string',  // Admin password is required
     ]);
 
-    $admin = OrgAdmin::where('admin_username', $data['admin_username'])->first();
+    $admin = OrgAdmin::where('admin_username', $data['admin_username'])->first();  // Find admin in org_admins table (NOT users table!)
 
-    if (!$admin) {
-        return response()->json(['message' => 'invalid_credentials'], 401);
+    if (!$admin) {  // If no admin found with that username
+        return response()->json(['message' => 'invalid_credentials'], 401);  // Return 401 Unauthorized
     }
 
-    // Check admin_password or creator_password
-    $passwordValid = ($admin->admin_password && Hash::check($data['admin_password'], $admin->admin_password))
-        || ($admin->creator_password && Hash::check($data['admin_password'], $admin->creator_password));
+    // Admins can have TWO passwords - check both:
+    $passwordValid = ($admin->admin_password && Hash::check($data['admin_password'], $admin->admin_password))  // Check primary admin password
+        || ($admin->creator_password && Hash::check($data['admin_password'], $admin->creator_password));  // OR check creator password (backup)
 
-    if (!$passwordValid) {
-        return response()->json(['message' => 'invalid_credentials'], 401);
+    if (!$passwordValid) {  // If neither password matched
+        return response()->json(['message' => 'invalid_credentials'], 401);  // Return 401 Unauthorized
     }
 
-    // Revoke all existing tokens for this admin
-    $admin->tokens()->delete();
+    $admin->tokens()->delete();  // Delete all existing admin tokens (single session policy)
 
-    // Create new Sanctum token for admin
-    $token = $admin->createToken('admin_token')->plainTextToken;
+    $token = $admin->createToken('admin_token')->plainTextToken;  // Create new admin token
 
-    return response()->json([
-        'token' => $token,
-        'admin' => $admin->load('organization:id,name,slug')
+    return response()->json([  // Return JSON response with:
+        'token' => $token,  // The authentication token
+        'admin' => $admin->load('organization:id,name,slug')  // Admin data + their organization info (eager load only id, name, slug)
     ]);
-}
+}  // Admin is now authenticated and can access admin-only routes
 ```
 
 **🔍 How This Works:**
@@ -198,60 +194,58 @@ public function adminLogin(Request $request)
 **File**: `app/Http/Controllers/Api/AuthController.php` (Lines 15-75)
 
 ```php
-public function register(Request $request)
+public function register(Request $request)  // Handles new user registration
 {
-    $data = $request->validate([
-        'student_id' => ['required','regex:/^\d{3}-\d{5}$/','unique:users,student_id'],
-        'first_name' => 'required|string|max:255',
-        'last_name' => 'required|string|max:255',
-        'username' => 'required|string|max:50|unique:users,username',
-        'email' => 'required|email|unique:users,email',
-        'password' => 'required|string|min:6',
-        'organization_ids' => 'nullable|array',
-        'organization_ids.*' => 'exists:organizations,id',
+    $data = $request->validate([  // Validate all registration fields
+        'student_id' => ['required','regex:/^\d{3}-\d{5}$/','unique:users,student_id'],  // Must be format XXX-XXXXX (e.g., 123-45678), must be unique
+        'first_name' => 'required|string|max:255',  // First name required, max 255 characters
+        'last_name' => 'required|string|max:255',  // Last name required, max 255 characters
+        'username' => 'required|string|max:50|unique:users,username',  // Username must be unique in users table
+        'email' => 'required|email|unique:users,email',  // Email must be valid format and unique
+        'password' => 'required|string|min:6',  // Password minimum 6 characters
+        'organization_ids' => 'nullable|array',  // Optional array of org IDs to join
+        'organization_ids.*' => 'exists:organizations,id',  // Each org ID must exist in organizations table
     ]);
 
-    $user = User::create([
-        'student_id' => $data['student_id'],
-        'first_name' => $data['first_name'],
-        'last_name' => $data['last_name'],
-        'username' => $data['username'],
-        'email' => $data['email'],
-        'password' => Hash::make($data['password']),
-    ]);
+    $user = User::create([  // Create new user record in database
+        'student_id' => $data['student_id'],  // Store student ID
+        'first_name' => $data['first_name'],  // Store first name
+        'last_name' => $data['last_name'],  // Store last name
+        'username' => $data['username'],  // Store username
+        'email' => $data['email'],  // Store email
+        'password' => Hash::make($data['password']),  // Hash password before storing (NEVER store plain text!)
+    ]);  // User is now created in database
 
-    // Attach selected organizations to user with 'pending' status
-    if (!empty($data['organization_ids'])) {
-        $attachData = [];
-        foreach ($data['organization_ids'] as $orgId) {
-            $attachData[$orgId] = ['status' => 'pending'];
+    if (!empty($data['organization_ids'])) {  // If user selected organizations to join
+        $attachData = [];  // Prepare array for pivot table data
+        foreach ($data['organization_ids'] as $orgId) {  // Loop through each selected org
+            $attachData[$orgId] = ['status' => 'pending'];  // Set status to 'pending' (needs admin approval)
         }
-        $user->organizations()->attach($attachData);
+        $user->organizations()->attach($attachData);  // Insert into organization_user pivot table
 
-        // Create notification for each organization's admins
-        foreach ($data['organization_ids'] as $orgId) {
-            $org = Organization::find($orgId);
-            if ($org) {
-                Notification::create([
-                    'organization_id' => $orgId,
-                    'user_id' => $user->id,
-                    'title' => 'New Membership Request',
-                    'body' => "{$user->first_name} {$user->last_name} ({$user->student_id}) has requested to join {$org->name}.",
-                    'data' => json_encode([
-                        'type' => 'membership_request',
-                        'user_id' => $user->id,
-                        'organization_id' => $orgId,
+        foreach ($data['organization_ids'] as $orgId) {  // Loop again to create notifications
+            $org = Organization::find($orgId);  // Find the organization
+            if ($org) {  // If org exists
+                Notification::create([  // Create notification for org admins
+                    'organization_id' => $orgId,  // Which org this is for
+                    'user_id' => $user->id,  // Who is requesting
+                    'title' => 'New Membership Request',  // Notification title
+                    'body' => "{$user->first_name} {$user->last_name} ({$user->student_id}) has requested to join {$org->name}.",  // Message body
+                    'data' => json_encode([  // Extra data as JSON
+                        'type' => 'membership_request',  // Type for filtering
+                        'user_id' => $user->id,  // Requester ID
+                        'organization_id' => $orgId,  // Org ID
                     ]),
                 ]);
             }
         }
     }
 
-    // Don't auto-login on registration
-    return response()->json([
+    // Security: Don't auto-login - user must explicitly login after registration
+    return response()->json([  // Return 201 Created response
         'message' => 'Registration successful. Please login to get your access token.',
-        'user' => $user
-    ], 201);
+        'user' => $user  // Return user data (without token!)
+    ], 201);  // 201 = Created status code
 }
 ```
 
@@ -385,30 +379,28 @@ public function complete(Request $request)
 **File**: `app/Http/Controllers/Api/AdminController.php` (Lines 437-466)
 
 ```php
-public function approveMembership(Request $request, $userId)
+public function approveMembership(Request $request, $userId)  // Admin approves a user's membership request
 {
-    $admin = $request->attributes->get('org_admin');
-    $user = User::findOrFail($userId);
+    $admin = $request->attributes->get('org_admin');  // Get admin object (set by AdminMiddleware)
+    $user = User::findOrFail($userId);  // Find user by ID or throw 404 error
 
-    // Update the pivot table
-    $user->organizations()->updateExistingPivot($admin->organization_id, [
-        'status' => 'approved',
-        'reviewed_at' => now(),
-        'reviewed_by' => $admin->id,
-    ]);
+    $user->organizations()->updateExistingPivot($admin->organization_id, [  // Update the pivot table row for this user+org
+        'status' => 'approved',  // Change status from 'pending' to 'approved'
+        'reviewed_at' => now(),  // Record when it was reviewed (current timestamp)
+        'reviewed_by' => $admin->id,  // Record which admin approved it (audit trail)
+    ]);  // Pivot table = organization_user (many-to-many relationship)
 
-    // Create notification for the user
-    Notification::create([
-        'organization_id' => $admin->organization_id,
-        'user_id' => $userId,
-        'title' => 'Membership Approved! 🎉',
-        'body' => "Your membership request for {$admin->organization->name} has been approved. You can now enjoy member-exclusive discounts!",
-        'data' => json_encode([
-            'type' => 'membership_approved',
-            'organization_id' => $admin->organization_id,
+    Notification::create([  // Create notification to inform the user
+        'organization_id' => $admin->organization_id,  // From which org
+        'user_id' => $userId,  // To which user
+        'title' => 'Membership Approved! 🎉',  // Happy notification title
+        'body' => "Your membership request for {$admin->organization->name} has been approved. You can now enjoy member-exclusive discounts!",  // Message explaining the benefit
+        'data' => json_encode([  // Extra data as JSON for frontend parsing
+            'type' => 'membership_approved',  // Type for filtering/routing
+            'organization_id' => $admin->organization_id,  // Org ID
         ]),
-    ]);
-}
+    ]);  // User will see this in their notification center
+}  // User can now get 10% member discount on this org's products!
 ```
 
 **🔍 How This Works:**
@@ -425,14 +417,12 @@ public function approveMembership(Request $request, $userId)
 **File**: `app/Http/Controllers/Api/CartController.php` (Lines 115-131)
 
 ```php
-// Get user's organization memberships for discount calculation
-$userOrgIds = $user->organizations()->pluck('organizations.id')->toArray();
+$userOrgIds = $user->organizations()->pluck('organizations.id')->toArray();  // Get ALL org IDs user belongs to as array
 
-// Add member info to each item
-$cart->items->each(function($item) use ($userOrgIds) {
-    $orgId = $item->merchandise->organization_id ?? null;
-    $item->is_member = $orgId && in_array($orgId, $userOrgIds);
-});
+$cart->items->each(function($item) use ($userOrgIds) {  // Loop through each cart item, passing $userOrgIds into the function
+    $orgId = $item->merchandise->organization_id ?? null;  // Get org ID of the product (null if not set)
+    $item->is_member = $orgId && in_array($orgId, $userOrgIds);  // true if org exists AND user is member of that org
+});  // Now each item has is_member flag for frontend to show "Member Discount" badge
 ```
 
 **🔍 How This Works:**
@@ -522,76 +512,72 @@ if ($request->has('on_sale') && $request->on_sale === 'true') {
 **File**: `app/Http/Controllers/Api/CartController.php` (Lines 137-294)
 
 ```php
-public function add(Request $request)
+public function add(Request $request)  // Handles adding items to shopping cart
 {
-    $data = $request->validate([
-        'merchandise_id' => 'required|exists:merchandises,id',
-        'quantity' => 'required|integer|min:1',
-        'variant' => 'nullable|string',
-        'variant_options' => 'nullable|array',
+    $data = $request->validate([  // Validate incoming request data
+        'merchandise_id' => 'required|exists:merchandises,id',  // Product ID must exist in database
+        'quantity' => 'required|integer|min:1',  // Must order at least 1 item
+        'variant' => 'nullable|string',  // Optional: variant as JSON string
+        'variant_options' => 'nullable|array',  // Optional: variant as array (e.g., {"size": "M", "color": "Red"})
     ]);
 
-    $user = $request->user();
-    $merch = Merchandise::findOrFail($data['merchandise_id']);
+    $user = $request->user();  // Get currently authenticated user
+    $merch = Merchandise::findOrFail($data['merchandise_id']);  // Find product or throw 404
 
-    // Get available stock (check variant stock if applicable)
-    $availableStock = $merch->stock;
+    $availableStock = $merch->stock;  // Get total available stock for this product
 
-    // ... variant stock checking logic ...
+    // ... variant stock checking logic (if product has variants, check variant-specific stock) ...
 
-    // Check existing quantity in cart for same item/variant
-    $existingCart = OrderCart::where('user_id', $user->id)->where('type', 'cart')->first();
-    $existingQty = 0;
-    if ($existingCart) {
-        $existingItem = OrderCartItem::where('orders_and_cart_id', $existingCart->id)
-            ->where('merchandise_id', $merch->id)
-            ->when($variantJson, fn($q) => $q->where('variant', $variantJson))
-            ->when(!$variantJson, fn($q) => $q->whereNull('variant'))
+    // Check if user already has this item in cart
+    $existingCart = OrderCart::where('user_id', $user->id)->where('type', 'cart')->first();  // Find user's current cart
+    $existingQty = 0;  // Initialize existing quantity to 0
+    if ($existingCart) {  // If user has a cart
+        $existingItem = OrderCartItem::where('orders_and_cart_id', $existingCart->id)  // Find this product in their cart
+            ->where('merchandise_id', $merch->id)  // Match product ID
+            ->when($variantJson, fn($q) => $q->where('variant', $variantJson))  // If variant exists, match variant too
+            ->when(!$variantJson, fn($q) => $q->whereNull('variant'))  // If no variant, ensure cart item has no variant
             ->first();
-        if ($existingItem) {
-            $existingQty = $existingItem->quantity;
+        if ($existingItem) {  // If item already in cart
+            $existingQty = $existingItem->quantity;  // Get how many they already have
         }
     }
 
-    // Validate total quantity against stock
-    $totalRequestedQty = $existingQty + $data['quantity'];
-    if ($totalRequestedQty > $availableStock) {
-        $canAdd = max(0, $availableStock - $existingQty);
-        return response()->json([
-            'message' => $canAdd > 0
+    $totalRequestedQty = $existingQty + $data['quantity'];  // Total = already in cart + new request
+    if ($totalRequestedQty > $availableStock) {  // If requesting more than available
+        $canAdd = max(0, $availableStock - $existingQty);  // Calculate how many they CAN add
+        return response()->json([  // Return error with helpful info
+            'message' => $canAdd > 0  // Custom message based on situation
                 ? "Only {$canAdd} more item(s) available. You already have {$existingQty} in your cart."
                 : "Sorry, only {$availableStock} item(s) available in stock.",
-            'available_stock' => $availableStock,
-            'in_cart' => $existingQty,
-            'can_add' => $canAdd
-        ], 422);
+            'available_stock' => $availableStock,  // Total stock available
+            'in_cart' => $existingQty,  // How many already in cart
+            'can_add' => $canAdd  // How many more can be added
+        ], 422);  // 422 = Unprocessable Entity
     }
 
-    // create or get cart
-    $cart = OrderCart::firstOrCreate(
-        ['user_id' => $user->id, 'type' => 'cart'],
-        ['status' => 'pending', 'total_amount' => 0]
-    );
+    $cart = OrderCart::firstOrCreate(  // Find existing cart OR create new one
+        ['user_id' => $user->id, 'type' => 'cart'],  // Search criteria
+        ['status' => 'pending', 'total_amount' => 0]  // Default values if creating new
+    );  // This ensures each user has exactly ONE active cart
 
-    // add or update item
-    $item = OrderCartItem::where('orders_and_cart_id', $cart->id)
+    $item = OrderCartItem::where('orders_and_cart_id', $cart->id)  // Find existing item in cart
         ->where('merchandise_id', $merch->id)
         ->when($variantJson, fn($q) => $q->where('variant', $variantJson))
         ->first();
 
-    if ($item) {
-        $item->quantity += $data['quantity'];
-        $item->save();
-    } else {
-        OrderCartItem::create([
-            'orders_and_cart_id' => $cart->id,
-            'merchandise_id' => $merch->id,
-            'quantity' => $data['quantity'],
-            'price' => $merch->price,
-            'variant' => $variantJson,
+    if ($item) {  // If item already exists in cart
+        $item->quantity += $data['quantity'];  // Add to existing quantity
+        $item->save();  // Save changes to database
+    } else {  // If item not in cart yet
+        OrderCartItem::create([  // Create new cart item
+            'orders_and_cart_id' => $cart->id,  // Link to cart
+            'merchandise_id' => $merch->id,  // Which product
+            'quantity' => $data['quantity'],  // How many
+            'price' => $merch->price,  // Store price at time of adding (price snapshot)
+            'variant' => $variantJson,  // Store variant selection as JSON
         ]);
     }
-}
+}  // Item is now in cart!
 ```
 
 **🔍 Critical Logic Explained:**
@@ -940,42 +926,40 @@ private function validatePaymentRules($data, $totalAmount, $isReservation = fals
 **File**: `app/Http/Controllers/Api/OrderController.php` (Lines 170-224)
 
 ```php
-public function cancelOrder(Request $request, $id)
+public function cancelOrder(Request $request, $id)  // Handle user cancelling their own order
 {
-    $order = OrderCart::with('items.merchandise')
-        ->where('user_id', $request->user()->id)
-        ->where('type', 'order')
-        ->where('id', $id)
-        ->where('status', 'pending')  // ONLY pending orders can be cancelled
-        ->firstOrFail();
+    $order = OrderCart::with('items.merchandise')  // Load order with items and their products
+        ->where('user_id', $request->user()->id)  // Must belong to current user (security!)
+        ->where('type', 'order')  // Must be an order (not a cart)
+        ->where('id', $id)  // Match the order ID
+        ->where('status', 'pending')  // CRITICAL: Can ONLY cancel pending orders
+        ->firstOrFail();  // Get order or throw 404 if not found/not allowed
 
-    // Check if order is within 12-hour cancellation window
-    $orderDate = $order->created_at;
-    $now = now();
-    $hoursSinceOrder = $orderDate->diffInHours($now);
+    $orderDate = $order->created_at;  // When the order was placed
+    $now = now();  // Current time
+    $hoursSinceOrder = $orderDate->diffInHours($now);  // Calculate hours since order
 
-    if ($hoursSinceOrder >= 12) {
-        return response()->json([
+    if ($hoursSinceOrder >= 12) {  // If more than 12 hours have passed
+        return response()->json([  // Reject the cancellation request
             'message' => 'Cannot cancel order. Cancellation window (12 hours) has expired.'
-        ], 422);
-    }
+        ], 422);  // 422 = Unprocessable Entity
+    }  // After 12 hours, user must contact admin or request refund instead
 
-    // RESTORE STOCK atomically
-    DB::beginTransaction();
+    DB::beginTransaction();  // Start database transaction (all-or-nothing operation)
     try {
-        foreach ($order->items as $item) {
-            $this->restoreStockForItem($item);
-        }
+        foreach ($order->items as $item) {  // Loop through each item in the order
+            $this->restoreStockForItem($item);  // Add quantity back to product stock
+        }  // Stock is now restored
 
-        $order->status = 'cancelled';
-        $order->save();
+        $order->status = 'cancelled';  // Change order status
+        $order->save();  // Save to database
 
-        DB::commit();
-    } catch (\Exception $e) {
-        DB::rollBack();
-        // ... error handling
+        DB::commit();  // Commit transaction - all changes are permanent
+    } catch (\Exception $e) {  // If ANY error occurs
+        DB::rollBack();  // Undo ALL changes (stock restore + status change)
+        // ... error handling - nothing was changed in database
     }
-}
+}  // Order cancelled, stock restored, user can order again
 ```
 
 **🔍 Why 12-Hour Window?**
@@ -1153,30 +1137,26 @@ public function approveRefund(Request $request, $id)
 **File**: `app/Http/Middleware/AdminMiddleware.php`
 
 ```php
-public function handle(Request $request, Closure $next)
+public function handle(Request $request, Closure $next)  // Middleware runs BEFORE controller
 {
-    // First check if authenticated via Sanctum
-    if (!Auth::guard('sanctum')->check()) {
-        return response()->json([
+    if (!Auth::guard('sanctum')->check()) {  // Check if request has valid Sanctum token
+        return response()->json([  // If no token or invalid token
             'message' => 'Unauthorized. Admin access required.'
-        ], 403);
+        ], 403);  // 403 = Forbidden
     }
 
-    // Get the authenticated user
-    $user = Auth::guard('sanctum')->user();
+    $user = Auth::guard('sanctum')->user();  // Get the authenticated user from token
 
-    // Check if the authenticated user is an OrgAdmin
-    if (!($user instanceof OrgAdmin)) {
-        return response()->json([
+    if (!($user instanceof OrgAdmin)) {  // Check if user is an OrgAdmin (not regular User)
+        return response()->json([  // If it's a regular user trying to access admin routes
             'message' => 'Unauthorized. Admin access required.'
-        ], 403);
-    }
+        ], 403);  // 403 = Forbidden - nice try!
+    }  // This check works because OrgAdmin and User extend different models
 
-    // Set the admin in request for controllers to use
-    $request->attributes->set('org_admin', $user);
+    $request->attributes->set('org_admin', $user);  // Store admin object for controllers to use
 
-    return $next($request);
-}
+    return $next($request);  // Continue to the controller - access granted!
+}  // Controllers can now access admin via: $request->attributes->get('org_admin')
 ```
 
 **🔍 How It Works:**
@@ -1314,19 +1294,20 @@ The variant key matching is complex because:
 **File**: `app/Models/Merchandise.php` (Lines 207-217)
 
 ```php
-public function syncStockFromVariants()
+public function syncStockFromVariants()  // Recalculate main stock from variant stocks
 {
-    $variant = $this->variants()->first();
-    if ($variant && is_array($variant->variant_stock)) {
+    $variant = $this->variants()->first();  // Get the first variant record for this product
+    if ($variant && is_array($variant->variant_stock)) {  // If variant exists and has stock array
         // Sum all variant stock values
-        // {"Red - S": 10, "Red - M": 15, "Blue - S": 20} = 45
-        $totalStock = array_sum($variant->variant_stock);
-        $this->stock = $totalStock;
-        $this->save();
-        return $totalStock;
+        // Example: {"Red - S": 10, "Red - M": 15, "Blue - S": 20}
+        // 10 + 15 + 20 = 45 total
+        $totalStock = array_sum($variant->variant_stock);  // PHP function to sum array values
+        $this->stock = $totalStock;  // Update main product stock field
+        $this->save();  // Persist to database - now product shows "45 in stock"
+        return $totalStock;  // Return the new total
     }
-    return $this->stock;
-}
+    return $this->stock;  // If no variants, return existing stock unchanged
+}  // Main stock is now synchronized with all variant stocks!
 ```
 
 **🔍 Why Sync?**
@@ -1424,29 +1405,29 @@ Think of this like **Facebook Messenger** but built specifically for the store. 
 **File**: `app/Http/Controllers/Api/MessageController.php` (Lines 15-37)
 
 ```php
-public function getUnreadCount(Request $request)
+public function getUnreadCount(Request $request)  // Get how many unread messages user has
 {
-    $user = $request->user();
+    $user = $request->user();  // Get currently authenticated user from token
 
-    // Get total unread messages (messages from admins that haven't been seen)
-    $totalUnread = Message::where('user_id', $user->id)
+    // Count ALL unread messages from admins
+    $totalUnread = Message::where('user_id', $user->id)  // Filter: only this user's messages
+        ->where('is_from_admin', true)  // Filter: only messages FROM admin (not user's own sent messages)
+        ->where('status', '!=', 'seen')  // Filter: not yet marked as 'seen'
+        ->count();  // Count how many match these criteria
+
+    // Count unread messages grouped by organization (for per-org badge numbers)
+    $unreadByOrg = Message::where('user_id', $user->id)  // Same filters as above
         ->where('is_from_admin', true)
         ->where('status', '!=', 'seen')
-        ->count();
+        ->selectRaw('organization_id, COUNT(*) as unread_count')  // Select org ID and count
+        ->groupBy('organization_id')  // Group results by organization
+        ->pluck('unread_count', 'organization_id');  // Convert to key-value array: {org_id: count}
 
-    // Get unread count per organization
-    $unreadByOrg = Message::where('user_id', $user->id)
-        ->where('is_from_admin', true)
-        ->where('status', '!=', 'seen')
-        ->selectRaw('organization_id, COUNT(*) as unread_count')
-        ->groupBy('organization_id')
-        ->pluck('unread_count', 'organization_id');
-
-    return response()->json([
-        'total_unread' => $totalUnread,
-        'unread_by_organization' => $unreadByOrg
+    return response()->json([  // Return JSON response
+        'total_unread' => $totalUnread,  // e.g., 5 (shows on main message icon)
+        'unread_by_organization' => $unreadByOrg  // e.g., {1: 2, 3: 3} (per-org badges)
     ]);
-}
+}  // Frontend uses this to show red badges with unread counts
 ```
 
 **🧠 Beginner Explanation (Like Explaining to a 10-Year-Old):**
@@ -1568,43 +1549,42 @@ It's like a **bookmark** for products. When you see something you like but aren'
 **File**: `app/Http/Controllers/Api/FavoriteController.php` (Lines 118-151)
 
 ```php
-public function toggle(Request $request)
+public function toggle(Request $request)  // Toggle favorite on/off (like/unlike button)
 {
-    $request->validate([
-        'merchandise_id' => 'required|integer|exists:merchandises,id'
+    $request->validate([  // Validate the merchandise ID
+        'merchandise_id' => 'required|integer|exists:merchandises,id'  // Must exist in database
     ]);
 
-    $userId = $request->user()->id;
-    $merchandiseId = $request->merchandise_id;
+    $userId = $request->user()->id;  // Get current user's ID
+    $merchandiseId = $request->merchandise_id;  // Get product ID from request
 
-    // Check if already favorited
-    $existing = Favorite::where('user_id', $userId)
-        ->where('merchandise_id', $merchandiseId)
-        ->first();
+    // Check if this product is already in user's favorites
+    $existing = Favorite::where('user_id', $userId)  // Find by user
+        ->where('merchandise_id', $merchandiseId)  // AND by product
+        ->first();  // Get the record (null if not found)
 
-    if ($existing) {
-        // Already favorited? Remove it!
-        $existing->delete();
-        return response()->json([
+    if ($existing) {  // If already favorited
+        $existing->delete();  // Remove from favorites (un-favorite)
+        return response()->json([  // Return success response
             'success' => true,
-            'message' => 'Removed from favorites',
-            'is_favorited' => false
+            'message' => 'Removed from favorites',  // Confirmation message
+            'is_favorited' => false  // Tell frontend: heart is now empty ♡
         ]);
     }
 
-    // Not favorited? Add it!
-    $favorite = Favorite::create([
-        'user_id' => $userId,
-        'merchandise_id' => $merchandiseId
+    // If not favorited yet, add it
+    $favorite = Favorite::create([  // Create new favorite record
+        'user_id' => $userId,  // Who favorited it
+        'merchandise_id' => $merchandiseId  // What they favorited
     ]);
 
-    return response()->json([
+    return response()->json([  // Return success response
         'success' => true,
-        'message' => 'Added to favorites',
-        'is_favorited' => true,
-        'favorite_id' => $favorite->id
+        'message' => 'Added to favorites',  // Confirmation message
+        'is_favorited' => true,  // Tell frontend: heart is now filled ❤️
+        'favorite_id' => $favorite->id  // ID of the new favorite record
     ]);
-}
+}  // Toggle complete! Frontend shows heart as filled or empty based on is_favorited
 ```
 
 **🧠 Beginner Explanation:**
